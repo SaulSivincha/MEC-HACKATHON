@@ -1,230 +1,425 @@
-import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import * as THREE from 'three'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import persistedRoutes from './data/routes.json'
 
-const DURATION = 20
-const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, value))
-const lerp = (a, b, t) => a + (b - a) * t
+const PLATE = { width: 1672, height: 941 }
+const STORAGE_KEY = 'orbita-route-calibration-v1'
 
-const stages = [
-  { until: 4, label: 'OPERACIÓN EN TIEMPO REAL', detail: '6 camiones · 2 palas · flujo estable', tone: 'neutral' },
-  { until: 8, label: 'CUELLO DE BOTELLA DETECTADO', detail: 'Pala 01 · cola de 3 camiones · +18 min', tone: 'alert' },
-  { until: 12, label: 'ORBITA ANALIZA ESCENARIOS', detail: 'Comparando rutas y tiempos de ciclo', tone: 'analysis' },
-  { until: 16, label: 'REASIGNACIÓN RECOMENDADA', detail: 'TRK-03 y TRK-06 → Pala 02', tone: 'success' },
-  { until: 20, label: 'FLUJO OPTIMIZADO', detail: 'Menos espera. Más material movido.', tone: 'success' },
+const routeDefinitions = [
+  { id: 'access', code: 'R-00', name: 'Acceso principal', from: 'entry', to: 'junction', direction: 'Entrada → Intersección J-01', color: '#83dfff' },
+  { id: 'shovel01', code: 'R-01', name: 'Pala 01', from: 'junction', to: 'shovel01', direction: 'Intersección J-01 → Pala 01', color: '#ffad63' },
+  { id: 'shovel02', code: 'R-02', name: 'Pala 02', from: 'junction', to: 'shovel02', direction: 'Intersección J-01 → Pala 02', color: '#51e6bf' },
+  { id: 'crusher', code: 'R-03', name: 'Descarga', from: 'junction', to: 'crusher', direction: 'Intersección J-01 → Chancadora', color: '#d5c1ff' },
 ]
 
-function stageFor(time) {
-  return stages.find((stage) => time < stage.until) ?? stages.at(-1)
+const mapNodes = {
+  entry: { x: 1416, y: 878, code: 'N-00', label: 'ENTRADA / PATIO', side: 'left' },
+  junction: { x: 994, y: 548, code: 'J-01', label: 'INTERSECCIÓN', side: 'right' },
+  shovel01: { x: 922, y: 215, code: 'P-01', label: 'PALA 01', side: 'left' },
+  shovel02: { x: 1200, y: 239, code: 'P-02', label: 'PALA 02', side: 'right' },
+  crusher: { x: 868, y: 761, code: 'D-01', label: 'CHANCADORA', side: 'right' },
 }
 
-function Road({ points, active = false, alert = false }) {
-  const geometry = useMemo(() => new THREE.BufferGeometry().setFromPoints(points.map((p) => new THREE.Vector3(...p))), [points])
-  const color = alert ? '#ee6c4d' : active ? '#41e0b6' : '#557180'
-  return (
-    <line geometry={geometry}>
-      <lineBasicMaterial color={color} transparent opacity={active || alert ? 0.95 : 0.5} linewidth={2} />
-    </line>
-  )
-}
-
-function Truck({ id, path, offset, time, reassigned = false, waiting = false }) {
-  const group = useRef()
-  const curve = useMemo(() => new THREE.CatmullRomCurve3(path.map((p) => new THREE.Vector3(...p))), [path])
-  const isOptimized = reassigned && time > 12
-  useFrame(() => {
-    if (!group.current) return
-    const paused = waiting && time > 4 && time < 12
-    const speed = isOptimized ? 0.105 : 0.072
-    const progress = paused ? 0.16 + offset * 0.025 : (time * speed + offset) % 0.98
-    const point = curve.getPointAt(progress)
-    const direction = curve.getTangentAt(progress)
-    group.current.position.copy(point)
-    group.current.rotation.y = Math.atan2(direction.x, direction.z)
-  })
-  const color = isOptimized ? '#42e2b8' : waiting && time > 4 ? '#ffaf5c' : '#54b7f5'
-  return (
-    <group ref={group}>
-      <mesh castShadow position={[0, 0.36, 0]}>
-        <boxGeometry args={[0.65, 0.34, 1.1]} />
-        <meshStandardMaterial color={color} metalness={0.35} roughness={0.38} emissive={color} emissiveIntensity={0.16} />
-      </mesh>
-      <mesh castShadow position={[0, 0.62, -0.12]}>
-        <boxGeometry args={[0.58, 0.24, 0.48]} />
-        <meshStandardMaterial color="#cfebff" metalness={0.65} roughness={0.18} />
-      </mesh>
-      <mesh position={[0, 0.18, 0.48]}>
-        <boxGeometry args={[0.72, 0.14, 0.35]} />
-        <meshStandardMaterial color="#172532" />
-      </mesh>
-      <sprite position={[0, 1.35, 0]} scale={[1.55, 0.42, 1]}>
-        <spriteMaterial color={color} transparent opacity={0.88} />
-      </sprite>
-    </group>
-  )
-}
-
-function Shovel({ position, alert, active }) {
-  const arm = useRef()
-  useFrame(({ clock }) => {
-    if (arm.current) arm.current.rotation.z = -0.5 + Math.sin(clock.elapsedTime * 1.8) * 0.16
-  })
-  const color = alert ? '#ef6c4d' : active ? '#41e0b6' : '#70a8be'
-  return (
-    <group position={position}>
-      <mesh castShadow position={[0, 0.45, 0]}>
-        <cylinderGeometry args={[0.6, 0.78, 0.35, 8]} />
-        <meshStandardMaterial color="#f2bd52" metalness={0.25} roughness={0.5} />
-      </mesh>
-      <mesh castShadow position={[0, 1.05, 0]}>
-        <boxGeometry args={[0.9, 0.78, 0.72]} />
-        <meshStandardMaterial color="#e5aa38" />
-      </mesh>
-      <group ref={arm} position={[0.38, 1.22, 0]}>
-        <mesh castShadow position={[0.45, 0, 0]}>
-          <boxGeometry args={[1.05, 0.16, 0.2]} />
-          <meshStandardMaterial color="#d99524" />
-        </mesh>
-        <mesh castShadow position={[0.95, -0.18, 0]} rotation-z={-0.65}>
-          <boxGeometry args={[0.55, 0.18, 0.36]} />
-          <meshStandardMaterial color="#c77f16" />
-        </mesh>
-      </group>
-      <mesh position={[0, 0.18, 0]} rotation-x={-Math.PI / 2}>
-        <ringGeometry args={[1.05, 1.15, 48]} />
-        <meshBasicMaterial color={color} transparent opacity={0.8} side={THREE.DoubleSide} />
-      </mesh>
-    </group>
-  )
-}
-
-function Mine({ time }) {
-  const reassignment = time > 12
-  const alert = time > 4 && time < 12
-  const roads = {
-    left: [[-8, 0.35, 5], [-5, 0.4, 1], [-3.8, 0.7, -2.7], [-0.9, 0.75, -3.7]],
-    right: [[7.5, 0.35, 5.4], [5.1, 0.4, 1.5], [3.8, 0.7, -2.2], [0.9, 0.75, -3.7]],
-    center: [[-0.9, 0.75, -3.7], [0, 1.2, -0.7], [0.9, 0.75, -3.7]],
+function loadRoutes() {
+  try {
+    const local = JSON.parse(localStorage.getItem(STORAGE_KEY))
+    if (local && typeof local === 'object') return local
+  } catch {
+    // Si el navegador no tiene datos válidos, usamos el archivo del proyecto.
   }
-  return (
-    <group>
-      <mesh receiveShadow position={[0, -0.35, 0]}>
-        <cylinderGeometry args={[11, 12, 0.7, 6]} />
-        <meshStandardMaterial color="#423327" roughness={0.96} />
-      </mesh>
-      <mesh receiveShadow position={[0, 0.02, 0]}>
-        <cylinderGeometry args={[8.9, 9.8, 0.48, 6]} />
-        <meshStandardMaterial color="#65452e" roughness={0.95} />
-      </mesh>
-      <mesh receiveShadow position={[0, 0.36, -0.1]}>
-        <cylinderGeometry args={[6.7, 7.6, 0.42, 6]} />
-        <meshStandardMaterial color="#89593a" roughness={0.94} />
-      </mesh>
-      <mesh receiveShadow position={[0, 0.72, -0.3]}>
-        <cylinderGeometry args={[4.7, 5.6, 0.34, 6]} />
-        <meshStandardMaterial color="#ad7145" roughness={0.9} />
-      </mesh>
-
-      <Road points={roads.left} alert={alert} />
-      <Road points={roads.right} active={reassignment} />
-      <Road points={roads.center} active={reassignment} />
-
-      <Shovel position={[-1.35, 1.12, -3.85]} alert={alert} />
-      <Shovel position={[1.35, 1.12, -3.85]} active={reassignment} />
-      <Truck id="TRK-01" path={roads.left} offset={0.02} time={time} waiting />
-      <Truck id="TRK-02" path={roads.left} offset={0.2} time={time} waiting />
-      <Truck id="TRK-03" path={roads.left} offset={0.38} time={time} waiting reassigned />
-      <Truck id="TRK-04" path={roads.right} offset={0.1} time={time} />
-      <Truck id="TRK-05" path={roads.right} offset={0.34} time={time} />
-      <Truck id="TRK-06" path={roads.right} offset={0.55} time={time} reassigned />
-      {time > 8 && time < 14 && <mesh position={[0, 3.2, -1.3]} rotation-x={-Math.PI / 2}>
-        <ringGeometry args={[0.7, 0.76, 64]} />
-        <meshBasicMaterial color="#6ec8ff" transparent opacity={0.9} side={THREE.DoubleSide} />
-      </mesh>}
-    </group>
-  )
+  return persistedRoutes
 }
 
-function CameraRig({ time }) {
-  const { camera } = useThree()
-  const target = useMemo(() => new THREE.Vector3(), [])
-  useFrame(() => {
-    const focus = time < 4 ? [0, 1.1, 0] : time < 8 ? [-1.4, 1.1, -3.8] : time < 16 ? [0, 1.15, -2.4] : [0, 1.1, -0.4]
-    const position = time < 4 ? [12, 12, 14] : time < 8 ? [7.8, 6.4, 8.2] : time < 16 ? [10, 8, 10.5] : [12, 10, 13]
-    target.set(...focus)
-    camera.position.lerp(new THREE.Vector3(...position), 0.025)
-    camera.lookAt(target)
-  })
-  return null
+const polylinePath = (points = []) => points.length
+  ? `M ${points.map(([x, y]) => `${x} ${y}`).join(' L ')}`
+  : ''
+
+// Filtra el temblor fino del lápiz sin alterar los puntos guardados.
+const lightlySmooth = (points = []) => points.map((point, index) => {
+  if (index < 2 || index > points.length - 3) return point
+  const weights = [.08, .17, .5, .17, .08]
+  const window = points.slice(index - 2, index + 3)
+  return [0, 1].map((axis) => window.reduce((sum, sample, sampleIndex) => sum + sample[axis] * weights[sampleIndex], 0))
+})
+
+// Reduce puntos redundantes y crea una spline suave que atraviesa el trazado.
+// La tensión baja evita cortar las curvas reales de la carretera.
+const smoothRoutePath = (points = []) => {
+  if (points.length < 3) return polylinePath(points)
+  const filtered = lightlySmooth(points).filter((_, index) => index === 0 || index === points.length - 1 || index % 3 === 0)
+  const tension = .11
+  return filtered.slice(0, -1).reduce((path, point, index) => {
+    const p0 = filtered[Math.max(0, index - 1)]
+    const p1 = point
+    const p2 = filtered[index + 1]
+    const p3 = filtered[Math.min(filtered.length - 1, index + 2)]
+    const cp1 = [p1[0] + (p2[0] - p0[0]) * tension, p1[1] + (p2[1] - p0[1]) * tension]
+    const cp2 = [p2[0] - (p3[0] - p1[0]) * tension, p2[1] - (p3[1] - p1[1]) * tension]
+    return `${path} C ${cp1[0]} ${cp1[1]} ${cp2[0]} ${cp2[1]} ${p2[0]} ${p2[1]}`
+  }, `M ${filtered[0][0]} ${filtered[0][1]}`)
 }
 
-function Scene({ time }) {
-  return <Canvas shadows dpr={[1, 1.5]} camera={{ position: [12, 12, 14], fov: 42 }}>
-    <color attach="background" args={['#07111a']} />
-    <fog attach="fog" args={['#07111a', 15, 35]} />
-    <ambientLight intensity={1.4} color="#b7d9ec" />
-    <directionalLight castShadow position={[7, 13, 8]} intensity={2.6} color="#ffe1b5" shadow-mapSize={[1024, 1024]} />
-    <pointLight position={[-4, 5, -4]} intensity={20} distance={10} color={time > 4 && time < 12 ? '#ee6c4d' : '#41e0b6'} />
-    <Mine time={time} />
-    <CameraRig time={time} />
-  </Canvas>
+const roundedPoints = (points) => points.map(([x, y]) => [Math.round(x * 10) / 10, Math.round(y * 10) / 10])
+
+function DrawingRoute({ points, color, draft = false, id, terminals = true }) {
+  if (!points?.length) return null
+  const path = draft ? polylinePath(points) : smoothRoutePath(points)
+  return <g style={{ '--route-color': color }}>
+    <path id={id ? `motion-${id}` : undefined} className={`drawn-corridor ${draft ? 'is-draft' : ''}`} d={path} />
+    <path className={`drawn-center ${draft ? 'is-draft' : ''}`} d={path} />
+    {terminals && <>
+      <circle className="route-terminal" cx={points[0][0]} cy={points[0][1]} r="8" />
+      <circle className="route-terminal" cx={points.at(-1)[0]} cy={points.at(-1)[1]} r="8" />
+    </>}
+  </g>
+}
+
+const simulationStages = [
+  { title: 'OPERACIÓN NORMAL', detail: 'Flujo continuo entre palas y chancadora', tone: 'normal', wait: '6.2 min', production: '1,240 t/h' },
+  { title: 'CONGESTIÓN DETECTADA', detail: 'Cola creciente en Pala 01', tone: 'alert', wait: '+18 min', production: '980 t/h' },
+  { title: 'ANÁLISIS PREDICTIVO', detail: 'Comparando 12 escenarios de despacho', tone: 'analysis', wait: 'Calculando', production: '12 escenarios' },
+  { title: 'REDIRECCIÓN ACTIVA', detail: 'TRK-04 y TRK-06 enviados a Pala 02', tone: 'redirect', wait: '−21%', production: '+11%' },
+  { title: 'FLUJO OPTIMIZADO', detail: 'Capacidad recuperada sin detener producción', tone: 'success', wait: '−28%', production: '+15%' },
+]
+
+const clamp01 = (value) => Math.max(0, Math.min(1, value))
+const between = (time, start, end, from, to) => from + (to - from) * clamp01((time - start) / (end - start))
+
+const routeSample = (points, progress, direction = 1, lane = 0) => {
+  const filtered = lightlySmooth(points).filter((_, index) => index === 0 || index === points.length - 1 || index % 3 === 0)
+  const scaled = clamp01(progress) * (filtered.length - 1)
+  const index = Math.min(filtered.length - 2, Math.floor(scaled))
+  const t = scaled - index
+  const p0 = filtered[Math.max(0, index - 1)]
+  const p1 = filtered[index]
+  const p2 = filtered[index + 1]
+  const p3 = filtered[Math.min(filtered.length - 1, index + 2)]
+  const tension = .11
+  const c1 = [p1[0] + (p2[0] - p0[0]) * tension, p1[1] + (p2[1] - p0[1]) * tension]
+  const c2 = [p2[0] - (p3[0] - p1[0]) * tension, p2[1] - (p3[1] - p1[1]) * tension]
+  const inverse = 1 - t
+  const x = inverse ** 3 * p1[0] + 3 * inverse ** 2 * t * c1[0] + 3 * inverse * t ** 2 * c2[0] + t ** 3 * p2[0]
+  const y = inverse ** 3 * p1[1] + 3 * inverse ** 2 * t * c1[1] + 3 * inverse * t ** 2 * c2[1] + t ** 3 * p2[1]
+  const dx = 3 * inverse ** 2 * (c1[0] - p1[0]) + 6 * inverse * t * (c2[0] - c1[0]) + 3 * t ** 2 * (p2[0] - c2[0])
+  const dy = 3 * inverse ** 2 * (c1[1] - p1[1]) + 6 * inverse * t * (c2[1] - c1[1]) + 3 * t ** 2 * (p2[1] - c2[1])
+  const length = Math.hypot(dx, dy) || 1
+  const laneX = (-dy / length) * lane
+  const laneY = (dx / length) * lane
+  return { x: x + laneX, y: y + laneY, angle: Math.atan2(dy * direction, dx * direction) * 180 / Math.PI }
+}
+
+function truckState(id, time) {
+  if (id === 'TRK-01') {
+    if (time < 3) return { route: 'access', progress: between(time, 0, 3, .45, .94), direction: 1, state: 'vacío' }
+    if (time < 7) return { route: 'shovel01', progress: between(time, 3, 7, .03, .7), direction: 1, state: 'vacío' }
+    if (time < 12) return { route: 'shovel01', progress: .7, direction: 1, state: 'cola' }
+    if (time < 16) return { route: 'shovel01', progress: between(time, 12, 16, .7, .98), direction: 1, state: 'vacío' }
+    return { route: 'shovel01', progress: .98, direction: 1, state: 'cargando' }
+  }
+  if (id === 'TRK-02') {
+    if (time < 2) return { route: 'shovel01', progress: between(time, 0, 2, .68, .98), direction: 1, state: 'vacío' }
+    if (time < 4.8) return { route: 'shovel01', progress: .98, direction: 1, state: 'cargando' }
+    if (time < 8.8) return { route: 'shovel01', progress: between(time, 4.8, 8.8, .98, .03), direction: -1, state: 'cargado' }
+    if (time < 12.8) return { route: 'crusher', progress: between(time, 8.8, 12.8, .03, .98), direction: 1, state: 'cargado' }
+    if (time < 15.2) return { route: 'crusher', progress: .98, direction: 1, state: 'descargando' }
+    return { route: 'crusher', progress: between(time, 15.2, 20, .98, .45), direction: -1, state: 'vacío' }
+  }
+  if (id === 'TRK-03') {
+    if (time < 2) return { route: 'crusher', progress: between(time, 0, 2, .25, .98), direction: 1, state: 'cargado' }
+    if (time < 4.5) return { route: 'crusher', progress: .98, direction: 1, state: 'descargando' }
+    if (time < 8.5) return { route: 'crusher', progress: between(time, 4.5, 8.5, .98, .04), direction: -1, state: 'vacío' }
+    if (time < 11.5) return { route: 'shovel01', progress: between(time, 8.5, 11.5, .04, .55), direction: 1, state: 'vacío' }
+    if (time < 14) return { route: 'shovel01', progress: .55, direction: 1, state: 'cola' }
+    return { route: 'shovel01', progress: between(time, 14, 20, .55, .84), direction: 1, state: 'vacío' }
+  }
+  if (id === 'TRK-04') {
+    if (time < 8) return { route: 'access', progress: between(time, 0, 8, .06, .82), direction: 1, state: 'vacío' }
+    if (time < 10.5) return { route: 'access', progress: .82, direction: 1, state: 'analizando' }
+    if (time < 12) return { route: 'access', progress: between(time, 10.5, 12, .82, .98), direction: 1, state: 'analizando' }
+    if (time < 17.5) return { route: 'shovel02', progress: between(time, 12, 17.5, .03, .98), direction: 1, state: 'redirigido' }
+    return { route: 'shovel02', progress: .98, direction: 1, state: 'cargando' }
+  }
+  if (id === 'TRK-05') {
+    if (time < 2) return { route: 'shovel02', progress: between(time, 0, 2, .72, .98), direction: 1, state: 'vacío' }
+    if (time < 4.5) return { route: 'shovel02', progress: .98, direction: 1, state: 'cargando' }
+    if (time < 9) return { route: 'shovel02', progress: between(time, 4.5, 9, .98, .03), direction: -1, state: 'cargado' }
+    if (time < 14.8) return { route: 'crusher', progress: between(time, 9, 14.8, .03, .82), direction: 1, state: 'cargado' }
+    if (time < 15.4) return { route: 'crusher', progress: .82, direction: 1, state: 'cola' }
+    if (time < 16) return { route: 'crusher', progress: between(time, 15.4, 16, .82, .98), direction: 1, state: 'cargado' }
+    if (time < 18.6) return { route: 'crusher', progress: .98, direction: 1, state: 'descargando' }
+    return { route: 'crusher', progress: between(time, 18.6, 20, .98, .75), direction: -1, state: 'vacío' }
+  }
+  if (time < 6) return { route: 'crusher', progress: between(time, 0, 6, .85, .18), direction: -1, state: 'vacío' }
+  if (time < 10) return { route: 'crusher', progress: .18, direction: -1, state: 'analizando', lane: 18 }
+  if (time < 13) return { route: 'crusher', progress: between(time, 10, 13, .18, .04), direction: -1, state: 'analizando', lane: between(time, 10, 13, 18, 9) }
+  return { route: 'shovel02', progress: between(time, 13, 20, .03, .78), direction: 1, state: 'redirigido' }
+}
+
+function HaulTruck({ routes, id, time }) {
+  const state = truckState(id, time)
+  const lane = state.lane ?? (state.direction === 1 ? -9 : 9)
+  const position = routeSample(routes[state.route], state.progress, state.direction, lane)
+  return <g className={`haul-truck truck-${state.state}`} transform={`translate(${position.x} ${position.y})`}>
+    <circle className="truck-signal" r="29" />
+    <g className="truck-body" transform={`rotate(${position.angle})`}>
+      <ellipse className="truck-shadow" cx="0" cy="2" rx="24" ry="15" />
+      <rect className="truck-chassis" x="-21" y="-10" width="42" height="20" rx="5" />
+      <path className="truck-bed" d="M-20-9H3V9H-20l-4-4V-5z" />
+      <path className="truck-bed-ribs" d="M-15-8v16M-9-8v16M-3-8v16" />
+      <rect className="truck-cab" x="5" y="-9" width="15" height="18" rx="4" />
+      <path className="truck-window" d="M12-7h5l2 4H12zM12 7h5l2-4H12z" />
+      <rect className="truck-wheel" x="-15" y="-14" width="9" height="5" rx="2" />
+      <rect className="truck-wheel" x="-15" y="9" width="9" height="5" rx="2" />
+      <rect className="truck-wheel" x="8" y="-14" width="9" height="5" rx="2" />
+      <rect className="truck-wheel" x="8" y="9" width="9" height="5" rx="2" />
+      <circle className="truck-light" cx="21" cy="-5" r="2" />
+      <circle className="truck-light" cx="21" cy="5" r="2" />
+      <text className="truck-number" x="-9" y="3" textAnchor="middle">{id.replace('TRK-', '')}</text>
+    </g>
+    <g className="truck-status" transform="translate(0 -25)">
+      <rect x="-24" y="-8" width="48" height="13" rx="4" />
+      <text y="1" textAnchor="middle">{id}</text>
+    </g>
+  </g>
+}
+
+function VehicleLayer({ routes, time }) {
+  return <g className="vehicle-layer">
+    {['TRK-01', 'TRK-02', 'TRK-03', 'TRK-04', 'TRK-05', 'TRK-06'].map((id) => <HaulTruck key={id} routes={routes} id={id} time={time} />)}
+  </g>
+}
+
+function ScenarioEffects({ stage }) {
+  return <g className={`scenario-effects stage-${stage}`}>
+    {(stage === 2 || stage === 3) && <g className="decision-pulse" transform="translate(994 548)">
+      <circle r="30" /><circle r="58" /><circle r="86" />
+      <text x="0" y="-103" textAnchor="middle">MOTOR PREDICTIVO</text>
+    </g>}
+    {(stage === 1 || stage === 2) && <g className="queue-warning" transform="translate(949 330)">
+      <path d="M0-16 15 12h-30z" /><text x="25" y="4">COLA +3</text>
+    </g>}
+  </g>
+}
+
+function MapNode({ nodeId, active, role, compact }) {
+  const node = mapNodes[nodeId]
+  const labelX = node.side === 'left' ? -28 : 28
+  const anchor = node.side === 'left' ? 'end' : 'start'
+  return <g className={`map-node ${active ? 'is-active' : ''} ${compact ? 'is-compact' : ''}`} transform={`translate(${node.x} ${node.y})`}>
+    <circle className="node-ring" r="17" />
+    <circle className="node-core" r="5" />
+    <path className="node-tick" d="M-24 0H24M0-24V24" />
+    <text className="node-code" x={labelX} y="-5" textAnchor={anchor}>{node.code} · {node.label}</text>
+    {role && <text className={`node-role role-${role.toLowerCase()}`} x={labelX} y="13" textAnchor={anchor}>{role}</text>}
+  </g>
+}
+
+function NodeLayer({ active, mode }) {
+  return <g className="node-layer">
+    {Object.keys(mapNodes).map((nodeId) => {
+      const role = mode === 'editor' ? active.from === nodeId ? 'INICIO' : active.to === nodeId ? 'FIN' : null : null
+      return <MapNode key={nodeId} nodeId={nodeId} active={Boolean(role)} role={role} compact={mode === 'preview'} />
+    })}
+  </g>
 }
 
 export default function App() {
-  const [time, setTime] = useState(0)
-  const [playing, setPlaying] = useState(true)
+  const svgRef = useRef(null)
+  const drawingRef = useRef(false)
+  const [routes, setRoutes] = useState(loadRoutes)
+  const [activeIndex, setActiveIndex] = useState(0)
+  const [draft, setDraft] = useState([])
+  const [mode, setMode] = useState(() => Object.keys(loadRoutes()).length === 4 ? 'preview' : 'editor')
+  const [simulationTime, setSimulationTime] = useState(0)
+  const [message, setMessage] = useState('Mantén presionado y dibuja sobre el centro de la carretera')
+  const active = routeDefinitions[activeIndex]
+  const savedCount = useMemo(() => routeDefinitions.filter(({ id }) => routes[id]?.length > 1).length, [routes])
+  const stageIndex = Math.max(0, Math.min(simulationStages.length - 1, Math.floor(simulationTime / 4) || 0))
+  const scenario = simulationStages[stageIndex]
 
   useEffect(() => {
-    if (!playing) return undefined
-    let frame
-    let last = performance.now()
-    const animate = (now) => {
-      const delta = (now - last) / 1000
-      last = now
-      setTime((current) => {
-        const next = current + delta
-        if (next >= DURATION) {
-          setPlaying(false)
-          return DURATION
-        }
-        return next
-      })
-      frame = requestAnimationFrame(animate)
-    }
-    frame = requestAnimationFrame(animate)
-    return () => cancelAnimationFrame(frame)
-  }, [playing])
+    if (!Object.values(routes).some((points) => points?.length > 1)) return
+    fetch('/api/routes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(routes),
+    }).then((response) => {
+      if (response.ok) setMessage('Rutas del navegador sincronizadas con el proyecto')
+    }).catch(() => {
+      setMessage('Rutas guardadas en el navegador. Reinicia Vite para sincronizarlas con el proyecto')
+    })
+  }, [])
 
-  const stage = stageFor(time)
-  const optimized = time >= 16
-  const restart = () => {
-    setTime(0)
-    setPlaying(true)
+  useEffect(() => {
+    if (mode !== 'preview') return undefined
+    let animationFrame
+    const startedAt = performance.now()
+    const animate = (now) => {
+      const elapsed = Number.isFinite(now) ? (now - startedAt) / 1000 : 0
+      setSimulationTime(((elapsed % 20) + 20) % 20)
+      animationFrame = requestAnimationFrame(animate)
+    }
+    animationFrame = requestAnimationFrame(animate)
+    return () => cancelAnimationFrame(animationFrame)
+  }, [mode])
+
+  const eventPoint = (event) => {
+    const svg = svgRef.current
+    const point = svg.createSVGPoint()
+    point.x = event.clientX
+    point.y = event.clientY
+    const mapped = point.matrixTransform(svg.getScreenCTM().inverse())
+    return [mapped.x, mapped.y]
   }
 
-  return <main className="app-shell">
-    <Scene time={time} />
-    <div className="vignette" />
+  const beginDrawing = (event) => {
+    if (mode !== 'editor' || event.button !== 0) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    drawingRef.current = true
+    setDraft([eventPoint(event)])
+    setMessage(`Dibujando ${active.code}… suelta para terminar`)
+  }
+
+  const continueDrawing = (event) => {
+    if (!drawingRef.current) return
+    const next = eventPoint(event)
+    setDraft((current) => {
+      const previous = current.at(-1)
+      if (previous && Math.hypot(next[0] - previous[0], next[1] - previous[1]) < 3) return current
+      return [...current, next]
+    })
+  }
+
+  const endDrawing = (event) => {
+    if (!drawingRef.current) return
+    drawingRef.current = false
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    setMessage('Trazo listo. Revísalo y pulsa “Guardar ruta”')
+  }
+
+  const persist = async (nextRoutes) => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextRoutes))
+    try {
+      const response = await fetch('/api/routes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(nextRoutes),
+      })
+      if (!response.ok) throw new Error('No se pudo escribir el archivo')
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  const saveRoute = async () => {
+    if (draft.length < 2) {
+      setMessage('Primero dibuja la ruta completa sobre la carretera')
+      return
+    }
+    const nextRoutes = { ...routes, [active.id]: roundedPoints(draft) }
+    setRoutes(nextRoutes)
+    setDraft([])
+    const savedInProject = await persist(nextRoutes)
+    const nextIndex = Math.min(activeIndex + 1, routeDefinitions.length - 1)
+    setActiveIndex(nextIndex)
+    setMessage(savedInProject
+      ? `${active.code} guardada en el proyecto. Continúa con ${routeDefinitions[nextIndex].code}`
+      : `${active.code} guardada en este navegador. Continúa con ${routeDefinitions[nextIndex].code}`)
+  }
+
+  const clearActive = async () => {
+    const nextRoutes = { ...routes }
+    delete nextRoutes[active.id]
+    setRoutes(nextRoutes)
+    setDraft([])
+    await persist(nextRoutes)
+    setMessage(`${active.code} eliminada. Puedes dibujarla nuevamente`)
+  }
+
+  return <main className={`app-shell ${mode}-mode tone-${scenario.tone}`}>
+    <svg
+      ref={svgRef}
+      className="route-canvas"
+      viewBox={`0 0 ${PLATE.width} ${PLATE.height}`}
+      preserveAspectRatio="xMidYMid slice"
+      onPointerDown={beginDrawing}
+      onPointerMove={continueDrawing}
+      onPointerUp={endDrawing}
+      onPointerCancel={endDrawing}
+    >
+      <image href="/assets/open-pit-mine-hero-v2.png" x="0" y="0" width={PLATE.width} height={PLATE.height} preserveAspectRatio="none" />
+      <rect className="image-shade" width={PLATE.width} height={PLATE.height} />
+      {routeDefinitions.map((route) => {
+        const isBeingRedrawn = route.id === active.id && draft.length > 0
+        const simulationColor = mode === 'preview' && route.id === 'shovel01' && (stageIndex === 1 || stageIndex === 2)
+          ? '#ff765d'
+          : mode === 'preview' && route.id === 'shovel02' && stageIndex >= 3
+            ? '#4ce7b9'
+            : route.color
+        return !isBeingRedrawn && <DrawingRoute key={route.id} id={route.id} points={routes[route.id]} color={simulationColor} terminals={mode === 'editor'} />
+      })}
+      {mode === 'editor' && <DrawingRoute points={draft} color={active.color} draft />}
+      {mode === 'preview' && <ScenarioEffects stage={stageIndex} />}
+      {mode === 'preview' && <VehicleLayer routes={routes} time={simulationTime} />}
+      <NodeLayer active={active} mode={mode} />
+    </svg>
+
     <header className="topbar">
-      <div className="brand"><span className="brand-mark">◈</span><span>ORBITA</span><small>DIGITAL TWIN</small></div>
-      <div className="live-pill"><i /> SIMULACIÓN {playing ? 'EN CURSO' : 'FINALIZADA'}</div>
-    </header>
-    <section className="story" aria-live="polite">
-      <p className={`stage ${stage.tone}`}>ETAPA {String(stages.indexOf(stage) + 1).padStart(2, '0')}</p>
-      <h1>{stage.label}</h1>
-      <p className="detail">{stage.detail}</p>
-    </section>
-    <aside className="kpis">
-      <div className="kpi"><span>TIEMPO DE ESPERA</span><strong className={optimized ? 'good' : ''}>{optimized ? '−28%' : '+18 min'}</strong></div>
-      <div className="kpi"><span>TONELADAS / HORA</span><strong className={optimized ? 'good' : ''}>{optimized ? '+15%' : '1,240'}</strong></div>
-      <div className="kpi"><span>ASIGNACIÓN</span><strong className={optimized ? 'good' : ''}>{optimized ? 'ÓPTIMA' : 'ANALIZANDO'}</strong></div>
-    </aside>
-    <footer className="controls">
-      <button onClick={() => (playing ? setPlaying(false) : time >= DURATION ? restart() : setPlaying(true))}>
-        {playing ? 'Pausar' : time >= DURATION ? 'Reproducir simulación' : 'Continuar'}
+      <div className="brand"><span className="brand-mark">◈</span><span>ORBITA</span><small>{mode === 'editor' ? 'ROUTE EDITOR' : 'MINING DIGITAL TWIN'}</small></div>
+      <button className="mode-switch" onClick={() => { setMode(mode === 'editor' ? 'preview' : 'editor'); setDraft([]) }}>
+        {mode === 'editor' ? '▶ Probar movimiento' : '✎ Editar rutas'}
       </button>
-      <div className="timeline"><div className="timeline-fill" style={{ width: `${(time / DURATION) * 100}%` }} /></div>
-      <span>{Math.floor(time).toString().padStart(2, '0')} / 20 s</span>
-    </footer>
+      <div className="save-counter"><i /> {mode === 'editor' ? `${savedCount} / 4 RUTAS GUARDADAS` : '06 UNIDADES EN VIVO'}</div>
+    </header>
+
+    {mode === 'editor' && <aside className="editor-panel">
+      <div className="panel-heading"><span>CALIBRACIÓN MANUAL</span><b>✎ LÁPIZ</b></div>
+      <div className="route-tabs">
+        {routeDefinitions.map((route, index) => <button
+          key={route.id}
+          className={`${index === activeIndex ? 'active' : ''} ${routes[route.id]?.length ? 'saved' : ''}`}
+          onClick={() => { setActiveIndex(index); setDraft([]); setMessage(`Dibuja ${route.code}: ${route.direction}`) }}
+        >
+          <i style={{ background: route.color }} />
+          <span><strong>{route.code}</strong>{route.name}</span>
+          <em>{routes[route.id]?.length ? '✓' : String(index + 1).padStart(2, '0')}</em>
+        </button>)}
+      </div>
+      <div className="active-route">
+        <small>RUTA ACTIVA</small>
+        <strong style={{ color: active.color }}>{active.code} · {active.name}</strong>
+        <span>{active.direction}</span>
+        <div className="route-direction">
+          <b>{mapNodes[active.from].code}<small>INICIO</small></b>
+          <i>→</i>
+          <b>{mapNodes[active.to].code}<small>FIN</small></b>
+        </div>
+      </div>
+      <p className="editor-message">{message}</p>
+      <div className="editor-actions">
+        <button className="secondary" onClick={() => { setDraft([]); setMessage('Trazo descartado. Dibuja nuevamente') }}>Deshacer trazo</button>
+        <button className="primary" onClick={saveRoute}>Guardar ruta</button>
+      </div>
+      <button className="clear-button" onClick={clearActive}>Eliminar ruta guardada</button>
+    </aside>}
+
+    {mode === 'preview' && <aside className={`preview-panel tone-${scenario.tone}`}>
+      <small>ESCENARIO {String(stageIndex + 1).padStart(2, '0')} · 00:{String(Math.floor(simulationTime)).padStart(2, '0')}</small>
+      <strong>{scenario.title}</strong>
+      <span>{scenario.detail}</span>
+      <div className="simulation-kpis">
+        <div><small>ESPERA</small><b>{scenario.wait}</b></div>
+        <div><small>PRODUCCIÓN</small><b>{scenario.production}</b></div>
+      </div>
+      <div className="scenario-timeline" aria-label="Secuencia de escenarios">
+        {simulationStages.map((stage, index) => <i
+          key={stage.title}
+          className={index < stageIndex ? 'complete' : index === stageIndex ? 'active' : ''}
+        />)}
+      </div>
+      <div className="simulation-progress"><i style={{ width: `${(simulationTime / 20) * 100}%` }} /></div>
+    </aside>}
+
+    <footer className="editor-footer">{mode === 'editor' ? <>DIBUJA EN EL SENTIDO INDICADO <b>•</b> EL TRAZO SE GUARDA EN <code>src/data/routes.json</code></> : <>SIMULACIÓN DE MOVIMIENTO <b>•</b> TRAYECTORIAS CALIBRADAS</>}</footer>
   </main>
 }
