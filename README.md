@@ -66,7 +66,19 @@ Esto abrirá automáticamente una pestaña en tu navegador web con el simulador 
 ---
 
 ## 🛠 Arquitectura del Proyecto
-El proyecto está diseñado de forma modular para una simulación rápida:
-- `app.py`: Interfaz visual en Streamlit (El Simulador).
-- `requirements.txt`: Dependencias del sistema.
-- *(Próximamente)* Algoritmos de Terreno Sintético y Visión Computacional.
+El proyecto está diseñado con una estructura profesional y escalable:
+
+```text
+MEC-HACKATHON/
+├── app.py                  # Entry point del simulador web (Streamlit)
+├── requirements.txt        # Dependencias del proyecto
+├── data/
+│   ├── images/             # Imágenes de prueba para la demo de IA
+│   └── raw/                # Datos o logs crudos (si es necesario)
+├── models/                 # Aquí se descargarán los pesos de YOLOv8 (yolov8n.pt)
+├── notebooks/              # Jupyter notebooks para experimentación
+└── src/                    # Código fuente principal
+    ├── core/               # Lógica matemática (Tajo 3D y Algoritmo A*)
+    ├── vision/             # Módulo de Inteligencia Artificial (YOLOv8)
+    └── ui/                 # Componentes y gráficos para Streamlit
+```

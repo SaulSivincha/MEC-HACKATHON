@@ -1,0 +1,30 @@
+# Entornos Virtuales
+venv/
+.venv/
+env/
+
+# Caché de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Variables de Entorno
+.env
+
+# Modelos y Pesos (¡No subir los modelos pesados a Github!)
+models/*.pt
+*.weights
+*.onnx
+
+# Datos Crudos (Para evitar subir gigas de datos por accidente)
+data/raw/*
+!data/raw/.gitkeep
+data/images/*
+!data/images/.gitkeep
+
+# Streamlit
+.streamlit/
+
+# Sistema Operativo
+.DS_Store
+Thumbs.db
