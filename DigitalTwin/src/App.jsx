@@ -82,6 +82,8 @@ const simulationStages = [
 ]
 const SIMULATION_DURATION = 25
 const STAGE_DURATION = 5
+const INSPECTION_TIMING = { cursor: 13.7, click: 14.55, modal: 14.8, closeStart: 24.25, close: 24.8 }
+const REFERENCE_TRUCK = { model: 'CAT 793', payload: 240, maxLoadedSpeed: 60, grossPower: 1976 }
 
 const clamp01 = (value) => Math.max(0, Math.min(1, value))
 const between = (time, start, end, from, to) => from + (to - from) * clamp01((time - start) / (end - start))
@@ -170,11 +172,12 @@ function truckState(id, time) {
   return { route: 'shovel02', progress: .82, direction: 1, state: 'vacío' }
 }
 
-function HaulTruck({ routes, id, time }) {
+function HaulTruck({ routes, id, time, selected = false }) {
   const state = truckState(id, time)
   const lane = state.lane ?? (state.direction === 1 ? -12 : 12)
   const position = routeSample(routes[state.route], state.progress, state.direction, lane)
-  return <g className={`haul-truck truck-${state.state}`} transform={`translate(${position.x} ${position.y})`}>
+  return <g className={`haul-truck truck-${state.state} ${selected ? 'is-selected' : ''}`} transform={`translate(${position.x} ${position.y})`}>
+    {selected && <circle className="selection-ring" r="35" />}
     <circle className="truck-signal" r="29" />
     <g className="truck-body" transform={`rotate(${position.angle})`}>
       <ellipse className="truck-shadow" cx="0" cy="2" rx="24" ry="15" />
@@ -198,9 +201,28 @@ function HaulTruck({ routes, id, time }) {
   </g>
 }
 
-function VehicleLayer({ routes, time }) {
-  return <g className="vehicle-layer">
-    {['TRK-01', 'TRK-02', 'TRK-03', 'TRK-04', 'TRK-05', 'TRK-06'].map((id) => <HaulTruck key={id} routes={routes} id={id} time={time} />)}
+function VehicleLayer({ routes, time, selectedId }) {
+  return <g className={`vehicle-layer ${selectedId ? 'has-selection' : ''}`}>
+    {['TRK-01', 'TRK-02', 'TRK-03', 'TRK-04', 'TRK-05', 'TRK-06'].map((id) => <HaulTruck key={id} routes={routes} id={id} time={time} selected={id === selectedId} />)}
+  </g>
+}
+
+function InspectionCursor({ routes, time }) {
+  if (time < INSPECTION_TIMING.cursor || time >= INSPECTION_TIMING.modal + .45) return null
+  const state = truckState('TRK-02', time)
+  const lane = state.lane ?? (state.direction === 1 ? -12 : 12)
+  const truck = routeSample(routes[state.route], state.progress, state.direction, lane)
+  const approach = clamp01((time - INSPECTION_TIMING.cursor) / (INSPECTION_TIMING.click - INSPECTION_TIMING.cursor))
+  const x = truck.x + between(approach, 0, 1, 82, 13)
+  const y = truck.y + between(approach, 0, 1, 60, 12)
+  const clicked = time >= INSPECTION_TIMING.click
+  return <g className={`inspection-cursor ${clicked ? 'has-clicked' : ''}`}>
+    {clicked && <g className="click-feedback" transform={`translate(${truck.x} ${truck.y})`}>
+      <circle r="27" /><circle r="27" />
+    </g>}
+    <g className="cursor-pointer" transform={`translate(${x} ${y})`}>
+      <path d="M0 0 3 24 9 17 15 28 21 25 15 14 24 12z" />
+    </g>
   </g>
 }
 
@@ -251,6 +273,10 @@ export default function App() {
   const savedCount = useMemo(() => routeDefinitions.filter(({ id }) => routes[id]?.length > 1).length, [routes])
   const stageIndex = Math.max(0, Math.min(simulationStages.length - 1, Math.floor(simulationTime / STAGE_DURATION) || 0))
   const scenario = simulationStages[stageIndex]
+  const inspectedTruck = simulationTime >= INSPECTION_TIMING.click && simulationTime < INSPECTION_TIMING.close ? 'TRK-02' : null
+  const inspectionOpen = simulationTime >= INSPECTION_TIMING.modal && simulationTime < INSPECTION_TIMING.close
+  const inspectionClosing = simulationTime >= INSPECTION_TIMING.closeStart
+  const inspectedSpeed = Math.round(40 + Math.sin(simulationTime * 1.35) * 2)
 
   useEffect(() => {
     if (!Object.values(routes).some((points) => points?.length > 1)) return
@@ -376,7 +402,8 @@ export default function App() {
       })}
       {mode === 'editor' && <DrawingRoute points={draft} color={active.color} draft />}
       {mode === 'preview' && <ScenarioEffects stage={stageIndex} />}
-      {mode === 'preview' && <VehicleLayer routes={routes} time={simulationTime} />}
+      {mode === 'preview' && <VehicleLayer routes={routes} time={simulationTime} selectedId={inspectedTruck} />}
+      {mode === 'preview' && <InspectionCursor routes={routes} time={simulationTime} />}
       <NodeLayer active={active} mode={mode} />
     </svg>
 
@@ -426,13 +453,47 @@ export default function App() {
         <div><small>ESPERA</small><b>{scenario.wait}</b></div>
         <div><small>PRODUCCIÓN</small><b>{scenario.production}</b></div>
       </div>
-      <div className="scenario-timeline" aria-label="Secuencia de escenarios">
-        {simulationStages.map((stage, index) => <i
-          key={stage.title}
-          className={index < stageIndex ? 'complete' : index === stageIndex ? 'active' : ''}
-        />)}
+    </aside>}
+
+    {mode === 'preview' && inspectionOpen && <aside className={`vehicle-modal ${inspectionClosing ? 'is-closing' : ''}`} aria-label="Datos de TRK-02">
+      <div className="vehicle-modal-heading">
+        <span><i /> UNIDAD SELECCIONADA</span>
+        <b>TRK-02</b>
       </div>
-      <div className="simulation-progress"><i style={{ width: `${(simulationTime / SIMULATION_DURATION) * 100}%` }} /></div>
+      <div className="vehicle-model-reference">{REFERENCE_TRUCK.model} <i /> CLASE {REFERENCE_TRUCK.payload} T</div>
+      <div className="vehicle-side-view">
+        <svg viewBox="0 0 320 126" role="img" aria-label="Vista lateral del camión TRK-02">
+          <path className="inspection-ground" d="M18 105H302" />
+          <ellipse className="side-truck-shadow" cx="166" cy="105" rx="133" ry="9" />
+          <g className="side-truck-body">
+            <path className="side-truck-chassis" d="M45 78h218l21 14-9 10H46L33 90z" />
+            <path className="side-truck-bed" d="M43 38h139l31 42H58L35 67z" />
+            <path className="side-truck-ore" d="M51 38c15-10 28 1 40-5 15-8 27 3 41-3 15-7 31 2 44 8l19 28H62L43 57z" />
+            <path className="side-truck-bed-ribs" d="M61 43 73 73M95 40l8 33M130 39l5 34M164 42l3 31" />
+            <path className="side-truck-cab" d="M211 37h45l20 23v31h-73V56z" />
+            <path className="side-truck-window" d="M224 45h25l15 17h-40z" />
+            <path className="side-truck-nose" d="M276 65h18v25h-18z" />
+            <path className="side-truck-ladder" d="M208 61h-15v31m0-23h13m-13 9h13m-13 9h13" />
+            <text className="side-truck-id" x="239" y="81" textAnchor="middle">02</text>
+            {[82, 147, 248].map((x) => <g className="side-wheel" transform={`translate(${x} 96)`} key={x}>
+              <circle r="25" /><circle r="14" /><circle r="5" />
+            </g>)}
+            <circle className="side-truck-light" cx="293" cy="72" r="3" />
+          </g>
+        </svg>
+        <div className="side-view-status"><i /> EN ACARREO · {inspectedSpeed} KM/H</div>
+      </div>
+      <div className="vehicle-modal-data">
+        <div><span>CARGA NOMINAL</span><b>{REFERENCE_TRUCK.payload} t</b></div>
+        <div><span>VELOCIDAD</span><b>{inspectedSpeed} km/h</b></div>
+        <div><span>PALA ASIGNADA</span><b>PALA 01</b></div>
+        <div><span>VEL. MÁX. CARGADO</span><b>{REFERENCE_TRUCK.maxLoadedSpeed} km/h</b></div>
+        <div><span>POTENCIA BRUTA</span><b>{REFERENCE_TRUCK.grossPower.toLocaleString('es-PE')} kW</b></div>
+        <div><span>CICLOS / TURNO</span><b>Según ruta</b></div>
+      </div>
+      <div className="load-meter-label"><span>CAPACIDAD NOMINAL</span><b>{REFERENCE_TRUCK.payload} t</b></div>
+      <div className="load-meter"><i style={{ width: '100%' }} /></div>
+      <p><i /> Telemetría sincronizada en tiempo real</p>
     </aside>}
 
     <footer className="editor-footer">{mode === 'editor' ? <>DIBUJA EN EL SENTIDO INDICADO <b>•</b> EL TRAZO SE GUARDA EN <code>src/data/routes.json</code></> : <>SIMULACIÓN DE MOVIMIENTO <b>•</b> 06 UNIDADES <b>•</b> CICLO 25 S</>}</footer>
