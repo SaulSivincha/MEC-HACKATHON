@@ -3,34 +3,34 @@
 
 ![MEC-HACKATHON](https://img.shields.io/badge/PERUMEC-Hackathon-orange.svg)
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
-![Streamlit](https://img.shields.io/badge/Streamlit-App-red.svg)
+![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-red.svg)
 ![YOLOv8](https://img.shields.io/badge/AI-YOLOv8-yellow.svg)
 
 ## 📌 El Problema: Cuellos de Botella en la Mina
 En la minería a tajo abierto, el sistema de Dispatch tradicional asigna camiones a la pala más cercana (distancia plana). Esto genera un problema crítico: **Cuellos de Botella**. Múltiples camiones se dirigen a la misma pala, formando colas interminables, desperdiciando combustible y tiempo, mientras otras palas pueden estar vacías.
 
 ## 💡 Nuestra Solución: Vision-Based Dynamic Dispatch
-Llevamos el algoritmo A* al siguiente nivel industrial combinándolo con Inteligencia Artificial.
+Optimizamos la asignación de palas y camiones para evitar el cuello de botella utilizando Visión Computacional.
 
-### ¿Cómo funciona? (Esquema Visual)
+### ¿Cómo funciona la optimización?
 
 ```mermaid
 graph TD
-    A[Camión Vacío solicita destino] --> B{Sistema SmartDispatch}
+    A[Camión Vacío solicita destino] --> B{Motor de Optimización SmartDispatch}
     
-    subgraph Inteligencia Artificial
+    subgraph 1. Inteligencia Artificial (Los Ojos)
     C[Cámara en Pala 1] -->|YOLOv8 cuenta: 4 Camiones| D[Detecta Congestión]
     E[Cámara en Pala 2] -->|YOLOv8 cuenta: 0 Camiones| F[Detecta Pala Libre]
     end
     
-    D -.->|Envía Penalidad Alta| B
-    F -.->|Envía Penalidad Baja| B
+    D -.->|Envía Dato: Alta Espera| B
+    F -.->|Envía Dato: Cero Espera| B
     
-    subgraph Motor A* 3D
-    B -->|Calcula Ruta 3D + Penalidad de Cola| G[Asigna Ruta Óptima]
+    subgraph 2. Dashboard y Asignación (El Cerebro)
+    B -->|Calcula: Costo Distancia + Costo de Cola| G[Asigna Ruta Óptima]
     end
     
-    G -->|Desvía el tráfico hacia Pala 2| H((✅ Cero Colas))
+    G -->|Se visualiza en el Dashboard| H((✅ Cero Colas))
     
     classDef ai fill:#f9f,stroke:#333,stroke-width:2px;
     classDef motor fill:#bbf,stroke:#333,stroke-width:2px;
@@ -38,15 +38,15 @@ graph TD
     class B,G motor;
 ```
 
-1. **El Cerebro (A* 3D):** En lugar de un mapa plano 2D, generamos una topografía 3D matemática del tajo abierto. El algoritmo calcula la ruta más corta considerando el gasto de combustible real según la pendiente y la carga del camión (300 Tn).
-2. **Los Ojos (Visión Computacional):** Integramos **YOLOv8** simulando cámaras en las palas. La IA cuenta en tiempo real los camiones en la cola.
-3. **El Despacho Dinámico:** El algoritmo suma el costo del viaje físico + la penalidad por espera en la cola. Si la Pala 1 está cerca pero saturada, el sistema re-enruta inteligentemente el camión hacia la Pala 2 que está vacía. **¡Cero colas!**
+1. **Visión Computacional:** Integramos **YOLOv8** simulando cámaras en las palas. La IA cuenta en tiempo real los camiones haciendo cola.
+2. **Motor de Optimización:** El algoritmo toma el dato de la IA y suma: `Costo del Viaje Físico + Penalidad por Tiempo en Cola`. 
+3. **Dashboard Interactivo:** Si la Pala 1 está cerca pero saturada, el Dashboard calcula que es más barato ir a la Pala 2 y **visualiza en tiempo real** cómo re-asigna el camión hacia la ruta libre. 
 
 ---
 
-## 🚀 Cómo ejecutar el proyecto (Paso a Paso)
+## 🚀 Cómo ejecutar el Dashboard
 
-Sigue estos pasos para levantar el Gemelo Digital y la aplicación web en tu máquina local.
+Sigue estos pasos para levantar la plataforma en tu máquina local.
 
 ### 1. Instalar dependencias
 Abre tu terminal en esta carpeta e instala las librerías necesarias con:
@@ -54,14 +54,12 @@ Abre tu terminal en esta carpeta e instala las librerías necesarias con:
 pip install -r requirements.txt
 ```
 
-*(Librerías principales: `streamlit`, `numpy`, `plotly`, `ultralytics`, `opencv-python-headless`)*
-
 ### 2. Correr la aplicación
 Levanta el dashboard interactivo ejecutando este comando en tu terminal:
 ```bash
 streamlit run app.py
 ```
-Esto abrirá automáticamente una pestaña en tu navegador web con el simulador 3D y las cámaras IA.
+Esto abrirá automáticamente una pestaña en tu navegador web donde podrás ver la simulación de optimización en vivo.
 
 ---
 
@@ -70,7 +68,7 @@ El proyecto está diseñado con una estructura profesional y escalable:
 
 ```text
 MEC-HACKATHON/
-├── app.py                  # Entry point del simulador web (Streamlit)
+├── app.py                  # Entry point del Dashboard web (Streamlit)
 ├── requirements.txt        # Dependencias del proyecto
 ├── data/
 │   ├── images/             # Imágenes de prueba para la demo de IA
@@ -78,7 +76,12 @@ MEC-HACKATHON/
 ├── models/                 # Aquí se descargarán los pesos de YOLOv8 (yolov8n.pt)
 ├── notebooks/              # Jupyter notebooks para experimentación
 └── src/                    # Código fuente principal
-    ├── core/               # Lógica matemática (Tajo 3D y Algoritmo A*)
+    ├── core/               # Motor de Optimización y Lógica Matemática
     ├── vision/             # Módulo de Inteligencia Artificial (YOLOv8)
     └── ui/                 # Componentes y gráficos para Streamlit
 ```
+
+---
+
+## 🔮 Trabajo Futuro
+* **Gemelos Digitales (Digital Twins):** Integrar este motor de despacho con un software de Gemelo Digital hiperrealista usando los archivos topográficos DEM de la mina para tener un control 1:1 de toda la operación física.
