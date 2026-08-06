@@ -1,6 +1,6 @@
 # ORBITA — Gemelo Digital Minero
 
-Prototipo visual autocontenido de 25 segundos para explicar cómo un gemelo digital detecta una cola, evalúa alternativas y reasigna camiones entre palas.
+Prototipo visual autocontenido de 23 segundos para explicar cómo un gemelo digital detecta una cola, evalúa alternativas y reasigna camiones entre palas.
 
 ## Construcción
 
