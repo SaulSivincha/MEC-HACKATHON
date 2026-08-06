@@ -80,27 +80,47 @@ const simulationStages = [
   { title: 'REDIRECCIÓN ACTIVA', detail: 'TRK-04 y TRK-06 enviados a Pala 02', tone: 'redirect', wait: '−21%', production: '+11%' },
   { title: 'FLUJO OPTIMIZADO', detail: 'Capacidad recuperada sin detener producción', tone: 'success', wait: '−28%', production: '+15%' },
 ]
+const SIMULATION_DURATION = 25
+const STAGE_DURATION = 5
 
 const clamp01 = (value) => Math.max(0, Math.min(1, value))
 const between = (time, start, end, from, to) => from + (to - from) * clamp01((time - start) / (end - start))
 
+const cubicPoint = (p1, c1, c2, p2, t) => {
+  const inverse = 1 - t
+  return [
+    inverse ** 3 * p1[0] + 3 * inverse ** 2 * t * c1[0] + 3 * inverse * t ** 2 * c2[0] + t ** 3 * p2[0],
+    inverse ** 3 * p1[1] + 3 * inverse ** 2 * t * c1[1] + 3 * inverse * t ** 2 * c2[1] + t ** 3 * p2[1],
+  ]
+}
+
 const routeSample = (points, progress, direction = 1, lane = 0) => {
   const filtered = lightlySmooth(points).filter((_, index) => index === 0 || index === points.length - 1 || index % 3 === 0)
-  const scaled = clamp01(progress) * (filtered.length - 1)
-  const index = Math.min(filtered.length - 2, Math.floor(scaled))
-  const t = scaled - index
-  const p0 = filtered[Math.max(0, index - 1)]
-  const p1 = filtered[index]
-  const p2 = filtered[index + 1]
-  const p3 = filtered[Math.min(filtered.length - 1, index + 2)]
   const tension = .11
-  const c1 = [p1[0] + (p2[0] - p0[0]) * tension, p1[1] + (p2[1] - p0[1]) * tension]
-  const c2 = [p2[0] - (p3[0] - p1[0]) * tension, p2[1] - (p3[1] - p1[1]) * tension]
-  const inverse = 1 - t
-  const x = inverse ** 3 * p1[0] + 3 * inverse ** 2 * t * c1[0] + 3 * inverse * t ** 2 * c2[0] + t ** 3 * p2[0]
-  const y = inverse ** 3 * p1[1] + 3 * inverse ** 2 * t * c1[1] + 3 * inverse * t ** 2 * c2[1] + t ** 3 * p2[1]
-  const dx = 3 * inverse ** 2 * (c1[0] - p1[0]) + 6 * inverse * t * (c2[0] - c1[0]) + 3 * t ** 2 * (p2[0] - c2[0])
-  const dy = 3 * inverse ** 2 * (c1[1] - p1[1]) + 6 * inverse * t * (c2[1] - c1[1]) + 3 * t ** 2 * (p2[1] - c2[1])
+  const samples = []
+  filtered.slice(0, -1).forEach((p1, index) => {
+    const p0 = filtered[Math.max(0, index - 1)]
+    const p2 = filtered[index + 1]
+    const p3 = filtered[Math.min(filtered.length - 1, index + 2)]
+    const c1 = [p1[0] + (p2[0] - p0[0]) * tension, p1[1] + (p2[1] - p0[1]) * tension]
+    const c2 = [p2[0] - (p3[0] - p1[0]) * tension, p2[1] - (p3[1] - p1[1]) * tension]
+    for (let step = index === 0 ? 0 : 1; step <= 8; step += 1) samples.push(cubicPoint(p1, c1, c2, p2, step / 8))
+  })
+  const cumulative = [0]
+  for (let index = 1; index < samples.length; index += 1) {
+    cumulative.push(cumulative[index - 1] + Math.hypot(samples[index][0] - samples[index - 1][0], samples[index][1] - samples[index - 1][1]))
+  }
+  const target = clamp01(progress) * cumulative.at(-1)
+  let index = cumulative.findIndex((distance) => distance >= target)
+  if (index <= 0) index = 1
+  const segmentLength = cumulative[index] - cumulative[index - 1] || 1
+  const t = (target - cumulative[index - 1]) / segmentLength
+  const previous = samples[index - 1]
+  const next = samples[index]
+  const x = previous[0] + (next[0] - previous[0]) * t
+  const y = previous[1] + (next[1] - previous[1]) * t
+  const dx = next[0] - previous[0]
+  const dy = next[1] - previous[1]
   const length = Math.hypot(dx, dy) || 1
   const laneX = (-dy / length) * lane
   const laneY = (dx / length) * lane
@@ -109,54 +129,50 @@ const routeSample = (points, progress, direction = 1, lane = 0) => {
 
 function truckState(id, time) {
   if (id === 'TRK-01') {
-    if (time < 3) return { route: 'access', progress: between(time, 0, 3, .45, .94), direction: 1, state: 'vacío' }
-    if (time < 7) return { route: 'shovel01', progress: between(time, 3, 7, .03, .7), direction: 1, state: 'vacío' }
-    if (time < 12) return { route: 'shovel01', progress: .7, direction: 1, state: 'cola' }
-    if (time < 16) return { route: 'shovel01', progress: between(time, 12, 16, .7, .98), direction: 1, state: 'vacío' }
-    return { route: 'shovel01', progress: .98, direction: 1, state: 'cargando' }
+    if (time < 5) return { route: 'shovel01', progress: between(time, 0, 5, .35, .72), direction: 1, state: 'vacío' }
+    if (time < 10) return { route: 'shovel01', progress: .72, direction: 1, state: 'cola' }
+    if (time < 15) return { route: 'shovel01', progress: .72, direction: 1, state: 'analizando' }
+    if (time < 17) return { route: 'shovel01', progress: between(time, 15, 17, .72, .98), direction: 1, state: 'vacío' }
+    if (time < 21) return { route: 'shovel01', progress: .98, direction: 1, state: 'cargando' }
+    return { route: 'shovel01', progress: between(time, 21, 25, .98, .35), direction: -1, state: 'cargado' }
   }
   if (id === 'TRK-02') {
-    if (time < 2) return { route: 'shovel01', progress: between(time, 0, 2, .68, .98), direction: 1, state: 'vacío' }
-    if (time < 4.8) return { route: 'shovel01', progress: .98, direction: 1, state: 'cargando' }
-    if (time < 8.8) return { route: 'shovel01', progress: between(time, 4.8, 8.8, .98, .03), direction: -1, state: 'cargado' }
-    if (time < 12.8) return { route: 'crusher', progress: between(time, 8.8, 12.8, .03, .98), direction: 1, state: 'cargado' }
-    if (time < 15.2) return { route: 'crusher', progress: .98, direction: 1, state: 'descargando' }
-    return { route: 'crusher', progress: between(time, 15.2, 20, .98, .45), direction: -1, state: 'vacío' }
+    if (time < 1.5) return { route: 'shovel01', progress: between(time, 0, 1.5, .7, .98), direction: 1, state: 'vacío' }
+    if (time < 4.5) return { route: 'shovel01', progress: .98, direction: 1, state: 'cargando' }
+    if (time < 9.5) return { route: 'shovel01', progress: between(time, 4.5, 9.5, .98, .03), direction: -1, state: 'cargado' }
+    return { route: 'crusher', progress: between(time, 9.5, 25, .03, .87), direction: 1, state: 'cargado' }
   }
   if (id === 'TRK-03') {
-    if (time < 2) return { route: 'crusher', progress: between(time, 0, 2, .25, .98), direction: 1, state: 'cargado' }
-    if (time < 4.5) return { route: 'crusher', progress: .98, direction: 1, state: 'descargando' }
-    if (time < 8.5) return { route: 'crusher', progress: between(time, 4.5, 8.5, .98, .04), direction: -1, state: 'vacío' }
-    if (time < 11.5) return { route: 'shovel01', progress: between(time, 8.5, 11.5, .04, .55), direction: 1, state: 'vacío' }
-    if (time < 14) return { route: 'shovel01', progress: .55, direction: 1, state: 'cola' }
-    return { route: 'shovel01', progress: between(time, 14, 20, .55, .84), direction: 1, state: 'vacío' }
+    if (time < 2) return { route: 'crusher', progress: between(time, 0, 2, .86, .98), direction: 1, state: 'cargado' }
+    if (time < 5) return { route: 'crusher', progress: .98, direction: 1, state: 'descargando' }
+    return { route: 'crusher', progress: between(time, 5, 25, .98, .03), direction: -1, state: 'vacío' }
   }
   if (id === 'TRK-04') {
-    if (time < 8) return { route: 'access', progress: between(time, 0, 8, .06, .82), direction: 1, state: 'vacío' }
-    if (time < 10.5) return { route: 'access', progress: .82, direction: 1, state: 'analizando' }
-    if (time < 12) return { route: 'access', progress: between(time, 10.5, 12, .82, .98), direction: 1, state: 'analizando' }
-    if (time < 17.5) return { route: 'shovel02', progress: between(time, 12, 17.5, .03, .98), direction: 1, state: 'redirigido' }
+    if (time < 6) return { route: 'access', progress: between(time, 0, 6, .05, .75), direction: 1, state: 'vacío' }
+    if (time < 10) return { route: 'access', progress: .75, direction: 1, state: 'vacío' }
+    if (time < 12) return { route: 'access', progress: between(time, 10, 12, .75, .95), direction: 1, state: 'analizando' }
+    if (time < 15) return { route: 'access', progress: .95, direction: 1, state: 'analizando' }
+    if (time < 21) return { route: 'shovel02', progress: between(time, 15, 21, .03, .98), direction: 1, state: 'redirigido' }
     return { route: 'shovel02', progress: .98, direction: 1, state: 'cargando' }
   }
   if (id === 'TRK-05') {
-    if (time < 2) return { route: 'shovel02', progress: between(time, 0, 2, .72, .98), direction: 1, state: 'vacío' }
+    if (time < 1.5) return { route: 'shovel02', progress: between(time, 0, 1.5, .72, .98), direction: 1, state: 'vacío' }
     if (time < 4.5) return { route: 'shovel02', progress: .98, direction: 1, state: 'cargando' }
-    if (time < 9) return { route: 'shovel02', progress: between(time, 4.5, 9, .98, .03), direction: -1, state: 'cargado' }
-    if (time < 14.8) return { route: 'crusher', progress: between(time, 9, 14.8, .03, .82), direction: 1, state: 'cargado' }
-    if (time < 15.4) return { route: 'crusher', progress: .82, direction: 1, state: 'cola' }
-    if (time < 16) return { route: 'crusher', progress: between(time, 15.4, 16, .82, .98), direction: 1, state: 'cargado' }
-    if (time < 18.6) return { route: 'crusher', progress: .98, direction: 1, state: 'descargando' }
-    return { route: 'crusher', progress: between(time, 18.6, 20, .98, .75), direction: -1, state: 'vacío' }
+    if (time < 9.5) return { route: 'shovel02', progress: between(time, 4.5, 9.5, .98, .03), direction: -1, state: 'cargado' }
+    if (time < 11.5) return { route: 'shovel02', progress: .03, direction: -1, state: 'analizando', lane: 16 }
+    return { route: 'crusher', progress: between(time, 11.5, 25, .03, .66), direction: 1, state: 'cargado' }
   }
-  if (time < 6) return { route: 'crusher', progress: between(time, 0, 6, .85, .18), direction: -1, state: 'vacío' }
-  if (time < 10) return { route: 'crusher', progress: .18, direction: -1, state: 'analizando', lane: 18 }
-  if (time < 13) return { route: 'crusher', progress: between(time, 10, 13, .18, .04), direction: -1, state: 'analizando', lane: between(time, 10, 13, 18, 9) }
-  return { route: 'shovel02', progress: between(time, 13, 20, .03, .78), direction: 1, state: 'redirigido' }
+  if (time < 6) return { route: 'crusher', progress: between(time, 0, 6, .5, .18), direction: -1, state: 'vacío' }
+  if (time < 12) return { route: 'crusher', progress: .18, direction: -1, state: 'analizando', lane: 18 }
+  if (time < 15) return { route: 'crusher', progress: between(time, 12, 15, .18, .09), direction: -1, state: 'analizando', lane: between(time, 12, 15, 18, 12) }
+  if (time < 16) return { route: 'crusher', progress: between(time, 15, 16, .09, .03), direction: -1, state: 'redirigido', lane: between(time, 15, 16, 12, 9) }
+  if (time < 21.5) return { route: 'shovel02', progress: between(time, 16, 21.5, .03, .82), direction: 1, state: 'redirigido' }
+  return { route: 'shovel02', progress: .82, direction: 1, state: 'vacío' }
 }
 
 function HaulTruck({ routes, id, time }) {
   const state = truckState(id, time)
-  const lane = state.lane ?? (state.direction === 1 ? -9 : 9)
+  const lane = state.lane ?? (state.direction === 1 ? -12 : 12)
   const position = routeSample(routes[state.route], state.progress, state.direction, lane)
   return <g className={`haul-truck truck-${state.state}`} transform={`translate(${position.x} ${position.y})`}>
     <circle className="truck-signal" r="29" />
@@ -194,8 +210,8 @@ function ScenarioEffects({ stage }) {
       <circle r="30" /><circle r="58" /><circle r="86" />
       <text x="0" y="-103" textAnchor="middle">MOTOR PREDICTIVO</text>
     </g>}
-    {(stage === 1 || stage === 2) && <g className="queue-warning" transform="translate(949 330)">
-      <path d="M0-16 15 12h-30z" /><text x="25" y="4">COLA +3</text>
+    {stage === 1 && <g className="queue-warning" transform="translate(949 330)">
+      <path d="M0-16 15 12h-30z" /><text x="25" y="4">ESPERA +18 MIN</text>
     </g>}
   </g>
 }
@@ -233,7 +249,7 @@ export default function App() {
   const [message, setMessage] = useState('Mantén presionado y dibuja sobre el centro de la carretera')
   const active = routeDefinitions[activeIndex]
   const savedCount = useMemo(() => routeDefinitions.filter(({ id }) => routes[id]?.length > 1).length, [routes])
-  const stageIndex = Math.max(0, Math.min(simulationStages.length - 1, Math.floor(simulationTime / 4) || 0))
+  const stageIndex = Math.max(0, Math.min(simulationStages.length - 1, Math.floor(simulationTime / STAGE_DURATION) || 0))
   const scenario = simulationStages[stageIndex]
 
   useEffect(() => {
@@ -255,7 +271,7 @@ export default function App() {
     const startedAt = performance.now()
     const animate = (now) => {
       const elapsed = Number.isFinite(now) ? (now - startedAt) / 1000 : 0
-      setSimulationTime(((elapsed % 20) + 20) % 20)
+      setSimulationTime(((elapsed % SIMULATION_DURATION) + SIMULATION_DURATION) % SIMULATION_DURATION)
       animationFrame = requestAnimationFrame(animate)
     }
     animationFrame = requestAnimationFrame(animate)
@@ -404,7 +420,6 @@ export default function App() {
     </aside>}
 
     {mode === 'preview' && <aside className={`preview-panel tone-${scenario.tone}`}>
-      <small>ESCENARIO {String(stageIndex + 1).padStart(2, '0')} · 00:{String(Math.floor(simulationTime)).padStart(2, '0')}</small>
       <strong>{scenario.title}</strong>
       <span>{scenario.detail}</span>
       <div className="simulation-kpis">
@@ -417,9 +432,9 @@ export default function App() {
           className={index < stageIndex ? 'complete' : index === stageIndex ? 'active' : ''}
         />)}
       </div>
-      <div className="simulation-progress"><i style={{ width: `${(simulationTime / 20) * 100}%` }} /></div>
+      <div className="simulation-progress"><i style={{ width: `${(simulationTime / SIMULATION_DURATION) * 100}%` }} /></div>
     </aside>}
 
-    <footer className="editor-footer">{mode === 'editor' ? <>DIBUJA EN EL SENTIDO INDICADO <b>•</b> EL TRAZO SE GUARDA EN <code>src/data/routes.json</code></> : <>SIMULACIÓN DE MOVIMIENTO <b>•</b> TRAYECTORIAS CALIBRADAS</>}</footer>
+    <footer className="editor-footer">{mode === 'editor' ? <>DIBUJA EN EL SENTIDO INDICADO <b>•</b> EL TRAZO SE GUARDA EN <code>src/data/routes.json</code></> : <>SIMULACIÓN DE MOVIMIENTO <b>•</b> 06 UNIDADES <b>•</b> CICLO 25 S</>}</footer>
   </main>
 }
