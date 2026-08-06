@@ -80,9 +80,9 @@ const simulationStages = [
   { title: 'REDIRECCIÓN ACTIVA', detail: 'TRK-04 y TRK-06 enviados a Pala 02', tone: 'redirect', wait: '−21%', production: '+11%' },
   { title: 'FLUJO OPTIMIZADO', detail: 'Capacidad recuperada sin detener producción', tone: 'success', wait: '−28%', production: '+15%' },
 ]
-const SIMULATION_DURATION = 25
+const SIMULATION_DURATION = 23
 const STAGE_DURATION = 5
-const INSPECTION_TIMING = { cursor: 13.7, click: 14.55, modal: 14.8, closeStart: 24.25, close: 24.8 }
+const INSPECTION_TIMING = { cursor: 12.05, click: 12.75, modal: 12.95, closeStart: 22.4, close: 22.95 }
 const REFERENCE_TRUCK = { model: 'CAT 793', payload: 240, maxLoadedSpeed: 60, grossPower: 1976 }
 
 const clamp01 = (value) => Math.max(0, Math.min(1, value))
@@ -133,16 +133,16 @@ function truckState(id, time) {
   if (id === 'TRK-01') {
     if (time < 5) return { route: 'shovel01', progress: between(time, 0, 5, .35, .72), direction: 1, state: 'vacío' }
     if (time < 10) return { route: 'shovel01', progress: .72, direction: 1, state: 'cola' }
-    if (time < 15) return { route: 'shovel01', progress: .72, direction: 1, state: 'analizando' }
-    if (time < 17) return { route: 'shovel01', progress: between(time, 15, 17, .72, .98), direction: 1, state: 'vacío' }
-    if (time < 21) return { route: 'shovel01', progress: .98, direction: 1, state: 'cargando' }
-    return { route: 'shovel01', progress: between(time, 21, 25, .98, .35), direction: -1, state: 'cargado' }
+    if (time < 12) return { route: 'shovel01', progress: between(time, 10, 12, .72, .98), direction: 1, state: 'vacío' }
+    if (time < 16) return { route: 'shovel01', progress: .98, direction: 1, state: 'cargando' }
+    if (time < 22) return { route: 'shovel01', progress: between(time, 16, 22, .98, .03), direction: -1, state: 'cargado' }
+    return { route: 'crusher', progress: between(time, 22, 25, .03, .17), direction: 1, state: 'cargado' }
   }
   if (id === 'TRK-02') {
     if (time < 1.5) return { route: 'shovel01', progress: between(time, 0, 1.5, .7, .98), direction: 1, state: 'vacío' }
-    if (time < 4.5) return { route: 'shovel01', progress: .98, direction: 1, state: 'cargando' }
-    if (time < 9.5) return { route: 'shovel01', progress: between(time, 4.5, 9.5, .98, .03), direction: -1, state: 'cargado' }
-    return { route: 'crusher', progress: between(time, 9.5, 25, .03, .87), direction: 1, state: 'cargado' }
+    if (time < 10) return { route: 'shovel01', progress: .98, direction: 1, state: 'cargando' }
+    if (time < 15) return { route: 'shovel01', progress: between(time, 10, 15, .98, .03), direction: -1, state: 'cargado' }
+    return { route: 'crusher', progress: between(time, 15, 25, .03, .5), direction: 1, state: 'cargado' }
   }
   if (id === 'TRK-03') {
     if (time < 2) return { route: 'crusher', progress: between(time, 0, 2, .86, .98), direction: 1, state: 'cargado' }
@@ -168,8 +168,7 @@ function truckState(id, time) {
   if (time < 12) return { route: 'crusher', progress: .18, direction: -1, state: 'analizando', lane: 18 }
   if (time < 15) return { route: 'crusher', progress: between(time, 12, 15, .18, .09), direction: -1, state: 'analizando', lane: between(time, 12, 15, 18, 12) }
   if (time < 16) return { route: 'crusher', progress: between(time, 15, 16, .09, .03), direction: -1, state: 'redirigido', lane: between(time, 15, 16, 12, 9) }
-  if (time < 21.5) return { route: 'shovel02', progress: between(time, 16, 21.5, .03, .82), direction: 1, state: 'redirigido' }
-  return { route: 'shovel02', progress: .82, direction: 1, state: 'vacío' }
+  return { route: 'shovel02', progress: between(time, 16, 23, .03, .7), direction: 1, state: 'redirigido' }
 }
 
 function HaulTruck({ routes, id, time, selected = false }) {
@@ -496,6 +495,6 @@ export default function App() {
       <p><i /> Telemetría sincronizada en tiempo real</p>
     </aside>}
 
-    <footer className="editor-footer">{mode === 'editor' ? <>DIBUJA EN EL SENTIDO INDICADO <b>•</b> EL TRAZO SE GUARDA EN <code>src/data/routes.json</code></> : <>SIMULACIÓN DE MOVIMIENTO <b>•</b> 06 UNIDADES <b>•</b> CICLO 25 S</>}</footer>
+    <footer className="editor-footer">{mode === 'editor' ? <>DIBUJA EN EL SENTIDO INDICADO <b>•</b> EL TRAZO SE GUARDA EN <code>src/data/routes.json</code></> : <>SIMULACIÓN DE MOVIMIENTO <b>•</b> 06 UNIDADES <b>•</b> CICLO 23 S</>}</footer>
   </main>
 }
