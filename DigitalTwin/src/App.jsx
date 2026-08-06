@@ -76,17 +76,35 @@ function DrawingRoute({ points, color, draft = false, id, terminals = true }) {
 const simulationStages = [
   { title: 'OPERACIÓN NORMAL', detail: 'Flujo continuo entre palas y chancadora', tone: 'normal', wait: '6.2 min', production: '1,240 t/h' },
   { title: 'CONGESTIÓN DETECTADA', detail: 'Cola creciente en Pala 01', tone: 'alert', wait: '+18 min', production: '980 t/h' },
-  { title: 'ANÁLISIS PREDICTIVO', detail: 'Comparando 12 escenarios de despacho', tone: 'analysis', wait: 'Calculando', production: '12 escenarios' },
+  { title: 'ANÁLISIS PREDICTIVO', detail: 'Decisión de despacho en menos de 2 segundos', tone: 'analysis', wait: '< 2 s', production: '12 escenarios' },
   { title: 'REDIRECCIÓN ACTIVA', detail: 'TRK-04 y TRK-06 enviados a Pala 02', tone: 'redirect', wait: '−21%', production: '+11%' },
   { title: 'FLUJO OPTIMIZADO', detail: 'Capacidad recuperada sin detener producción', tone: 'success', wait: '−28%', production: '+15%' },
 ]
 const SIMULATION_DURATION = 23
-const STAGE_DURATION = 5
+const TIMELINE = {
+  congestion: 5,
+  analysis: 8.5,
+  redirect: 10.5,
+  optimized: 16.5,
+}
+const STAGE_STARTS = [0, TIMELINE.congestion, TIMELINE.analysis, TIMELINE.redirect, TIMELINE.optimized]
 const INSPECTION_TIMING = { cursor: 12.05, click: 12.75, modal: 12.95, closeStart: 22.4, close: 22.95 }
 const REFERENCE_TRUCK = { model: 'CAT 793', payload: 240, maxLoadedSpeed: 60, grossPower: 1976 }
 
 const clamp01 = (value) => Math.max(0, Math.min(1, value))
 const between = (time, start, end, from, to) => from + (to - from) * clamp01((time - start) / (end - start))
+const ROUTE_MIN = .03
+const ROUTE_MAX = .99
+
+const bouncingMotion = (time, startProgress, speed) => {
+  const range = ROUTE_MAX - ROUTE_MIN
+  const travelled = Math.max(0, startProgress - ROUTE_MIN) + Math.max(0, time) * speed
+  const leg = Math.floor(travelled / range)
+  const offset = travelled % range
+  return leg % 2 === 0
+    ? { progress: ROUTE_MIN + offset, direction: 1 }
+    : { progress: ROUTE_MAX - offset, direction: -1 }
+}
 
 const cubicPoint = (p1, c1, c2, p2, t) => {
   const inverse = 1 - t
@@ -131,44 +149,51 @@ const routeSample = (points, progress, direction = 1, lane = 0) => {
 
 function truckState(id, time) {
   if (id === 'TRK-01') {
-    if (time < 5) return { route: 'shovel01', progress: between(time, 0, 5, .35, .72), direction: 1, state: 'vacío' }
-    if (time < 10) return { route: 'shovel01', progress: .72, direction: 1, state: 'cola' }
-    if (time < 12) return { route: 'shovel01', progress: between(time, 10, 12, .72, .98), direction: 1, state: 'vacío' }
-    if (time < 16) return { route: 'shovel01', progress: .98, direction: 1, state: 'cargando' }
-    if (time < 22) return { route: 'shovel01', progress: between(time, 16, 22, .98, .03), direction: -1, state: 'cargado' }
-    return { route: 'crusher', progress: between(time, 22, 25, .03, .17), direction: 1, state: 'cargado' }
+    const speed = 1.6 / 22
+    if (time < 22) {
+      const motion = bouncingMotion(time, .35, speed)
+      const state = time < 5 ? 'vacío' : time < 8.8 ? 'cola' : time < 10 ? 'cargando' : 'cargado'
+      return { route: 'shovel01', ...motion, state }
+    }
+    return { route: 'crusher', ...bouncingMotion(time - 22, ROUTE_MIN, speed), state: 'cargado' }
   }
   if (id === 'TRK-02') {
-    if (time < 1.5) return { route: 'shovel01', progress: between(time, 0, 1.5, .7, .98), direction: 1, state: 'vacío' }
-    if (time < 10) return { route: 'shovel01', progress: .98, direction: 1, state: 'cargando' }
-    if (time < 15) return { route: 'shovel01', progress: between(time, 10, 15, .98, .03), direction: -1, state: 'cargado' }
-    return { route: 'crusher', progress: between(time, 15, 25, .03, .5), direction: 1, state: 'cargado' }
+    const speed = 1.25 / 15
+    if (time < 15) {
+      const motion = bouncingMotion(time, .7, speed)
+      const state = time < 3.48 ? 'vacío' : time < 4.5 ? 'cargando' : 'cargado'
+      return { route: 'shovel01', ...motion, state }
+    }
+    return { route: 'crusher', ...bouncingMotion(time - 15, ROUTE_MIN, speed), state: 'cargado' }
   }
   if (id === 'TRK-03') {
-    if (time < 2) return { route: 'crusher', progress: between(time, 0, 2, .86, .98), direction: 1, state: 'cargado' }
-    if (time < 5) return { route: 'crusher', progress: .98, direction: 1, state: 'descargando' }
-    return { route: 'crusher', progress: between(time, 5, 25, .98, .03), direction: -1, state: 'vacío' }
+    const motion = bouncingMotion(time, .86, .06)
+    const state = time < 2.17 ? 'cargado' : time < 3.2 ? 'descargando' : 'vacío'
+    return { route: 'crusher', ...motion, state }
   }
   if (id === 'TRK-04') {
-    if (time < 6) return { route: 'access', progress: between(time, 0, 6, .05, .75), direction: 1, state: 'vacío' }
-    if (time < 10) return { route: 'access', progress: .75, direction: 1, state: 'vacío' }
-    if (time < 12) return { route: 'access', progress: between(time, 10, 12, .75, .95), direction: 1, state: 'analizando' }
-    if (time < 15) return { route: 'access', progress: .95, direction: 1, state: 'analizando' }
-    if (time < 21) return { route: 'shovel02', progress: between(time, 15, 21, .03, .98), direction: 1, state: 'redirigido' }
-    return { route: 'shovel02', progress: .98, direction: 1, state: 'cargando' }
+    const speed = .94 / TIMELINE.redirect
+    const state = time < TIMELINE.analysis ? 'vacío' : time < 10.1 ? 'analizando' : 'redirigido'
+    if (time < TIMELINE.redirect) return { route: 'access', ...bouncingMotion(time, .05, speed), state }
+    const motion = bouncingMotion(time - TIMELINE.redirect, ROUTE_MIN, speed)
+    return { route: 'shovel02', ...motion, state: motion.direction === 1 ? 'redirigido' : 'cargado' }
   }
   if (id === 'TRK-05') {
-    if (time < 1.5) return { route: 'shovel02', progress: between(time, 0, 1.5, .72, .98), direction: 1, state: 'vacío' }
-    if (time < 4.5) return { route: 'shovel02', progress: .98, direction: 1, state: 'cargando' }
-    if (time < 9.5) return { route: 'shovel02', progress: between(time, 4.5, 9.5, .98, .03), direction: -1, state: 'cargado' }
-    if (time < 11.5) return { route: 'shovel02', progress: .03, direction: -1, state: 'analizando', lane: 16 }
-    return { route: 'crusher', progress: between(time, 11.5, 25, .03, .66), direction: 1, state: 'cargado' }
+    const routeChange = 10.8
+    const speed = 1.23 / routeChange
+    if (time < routeChange) {
+      const motion = bouncingMotion(time, .72, speed)
+      const state = time < 2.37 ? 'vacío' : time < 3.5 ? 'cargando' : time >= 9.5 ? 'analizando' : 'cargado'
+      return { route: 'shovel02', ...motion, state, lane: time >= 9.5 ? 16 : undefined }
+    }
+    return { route: 'crusher', ...bouncingMotion(time - routeChange, ROUTE_MIN, speed), state: 'cargado' }
   }
-  if (time < 6) return { route: 'crusher', progress: between(time, 0, 6, .5, .18), direction: -1, state: 'vacío' }
-  if (time < 12) return { route: 'crusher', progress: .18, direction: -1, state: 'analizando', lane: 18 }
-  if (time < 15) return { route: 'crusher', progress: between(time, 12, 15, .18, .09), direction: -1, state: 'analizando', lane: between(time, 12, 15, 18, 12) }
-  if (time < 16) return { route: 'crusher', progress: between(time, 15, 16, .09, .03), direction: -1, state: 'redirigido', lane: between(time, 15, 16, 12, 9) }
-  return { route: 'shovel02', progress: between(time, 16, 23, .03, .7), direction: 1, state: 'redirigido' }
+  const speed = .47 / TIMELINE.redirect
+  const state = time < TIMELINE.analysis ? 'vacío' : time < 10.1 ? 'analizando' : 'redirigido'
+  if (time < TIMELINE.redirect) {
+    return { route: 'crusher', progress: .5 - time * speed, direction: -1, state, lane: time >= TIMELINE.analysis ? 18 : undefined }
+  }
+  return { route: 'shovel02', ...bouncingMotion(time - TIMELINE.redirect, ROUTE_MIN, speed), state: 'redirigido' }
 }
 
 function HaulTruck({ routes, id, time, selected = false }) {
@@ -270,12 +295,12 @@ export default function App() {
   const [message, setMessage] = useState('Mantén presionado y dibuja sobre el centro de la carretera')
   const active = routeDefinitions[activeIndex]
   const savedCount = useMemo(() => routeDefinitions.filter(({ id }) => routes[id]?.length > 1).length, [routes])
-  const stageIndex = Math.max(0, Math.min(simulationStages.length - 1, Math.floor(simulationTime / STAGE_DURATION) || 0))
+  const stageIndex = STAGE_STARTS.reduce((current, start, index) => simulationTime >= start ? index : current, 0)
   const scenario = simulationStages[stageIndex]
   const inspectedTruck = simulationTime >= INSPECTION_TIMING.click && simulationTime < INSPECTION_TIMING.close ? 'TRK-02' : null
   const inspectionOpen = simulationTime >= INSPECTION_TIMING.modal && simulationTime < INSPECTION_TIMING.close
   const inspectionClosing = simulationTime >= INSPECTION_TIMING.closeStart
-  const inspectedSpeed = Math.round(40 + Math.sin(simulationTime * 1.35) * 2)
+  const inspectedSpeed = 35
 
   useEffect(() => {
     if (!Object.values(routes).some((points) => points?.length > 1)) return
