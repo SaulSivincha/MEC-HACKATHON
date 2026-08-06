@@ -38,10 +38,9 @@ graph TD
     class B,G motor;
 ```
 
-1. **Visión Computacional:** Integramos **YOLOv8** simulando cámaras en las palas. La IA cuenta en tiempo real los camiones haciendo cola.
-2. **Motor de Optimización:** El algoritmo toma el dato de la IA y suma: `Costo del Viaje Físico + Penalidad por Tiempo en Cola`. 
-3. **Dashboard Interactivo:** Si la Pala 1 está cerca pero saturada, el Dashboard calcula que es más barato ir a la Pala 2 y **visualiza en tiempo real** cómo re-asigna el camión hacia la ruta libre. 
-
+1. **Visión Computacional:** Integramos **YOLOv8**. La IA escanea una fotografía satelital/dron de la mina y extrae las **coordenadas espaciales (X, Y)** de cada camión detectado.
+2. **Generador de Gemelo 2D:** El sistema toma las coordenadas extraídas y *autogenera* un mapa digital en Plotly desde cero, replicando la posición geométrica exacta de la flota.
+3. **Motor de Enrutamiento:** El algoritmo traza una línea de despacho (ruta láser) dinámica sobre el mapa autogenerado para guiar al camión hacia la pala principal.
 ---
 
 ## 🚀 Cómo ejecutar el Dashboard
