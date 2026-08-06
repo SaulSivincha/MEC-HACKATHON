@@ -28,3 +28,5 @@ data/images/*
 # Sistema Operativo
 .DS_Store
 Thumbs.db
+node_modules/
+DigitalTwin/node_modules/
