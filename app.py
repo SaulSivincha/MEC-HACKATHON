@@ -98,7 +98,9 @@ if len(camiones_varados) > 0 and not db["simulacion_activa"]:
         db["flota"][v_id]["destino"] = resultado["asignacion"]
         db["flota"][v_id]["estado"] = "OPERATIVO" # Se soluciona
         
-        add_log(f"PREDICCIÓN IA: El modelo infiere que la mejor ruta es {resultado['asignacion']} con una confianza del {resultado['confianza']}%. Re-enrutando a {conductor}.")
+        eta = resultado["eta_minutos"]
+        
+        add_log(f"PREDICCIÓN IA: Se asigna la {resultado['asignacion']} (Confianza: {resultado['confianza']}%). ⏱️ Tiempo Estimado (ETA): {eta} minutos.")
         hubo_cambios = True
         
 elif len(camiones_varados) == 0 and db["simulacion_activa"]:

@@ -1,31 +1,35 @@
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.model_selection import train_test_split
 import joblib
 import os
 
-MODEL_PATH = "data/pukaria_model.pkl"
+MODEL_CLASSIFIER_PATH = "data/pukaria_model.pkl"
+MODEL_REGRESSOR_PATH = "data/pukaria_time_model.pkl"
 
 class PukarIAPredictor:
     """
-    Cerebro de PukarIA. 
-    Modelo RandomForest entrenado con telemetría hiperrealista.
+    Cerebro Dual de PukarIA. 
+    1. RandomForestClassifier (Para predecir Ruta).
+    2. RandomForestRegressor (Para predecir ETA en minutos).
     """
     def __init__(self):
-        self.modelo = None
+        self.modelo_ruta = None
+        self.modelo_tiempo = None
         self.entrenado = False
         self._cargar_o_entrenar()
         
     def _cargar_o_entrenar(self):
-        if os.path.exists(MODEL_PATH):
-            self.modelo = joblib.load(MODEL_PATH)
+        if os.path.exists(MODEL_CLASSIFIER_PATH) and os.path.exists(MODEL_REGRESSOR_PATH):
+            self.modelo_ruta = joblib.load(MODEL_CLASSIFIER_PATH)
+            self.modelo_tiempo = joblib.load(MODEL_REGRESSOR_PATH)
             self.entrenado = True
         else:
             self.entrenar_modelo_y_guardar()
             
     def entrenar_modelo_y_guardar(self):
-        print("🤖 [PUKARIA] Iniciando fase de entrenamiento (Dataset Hiperrealista)...")
+        print("🤖 [PUKARIA] Iniciando entrenamiento de Arquitectura Dual (Ruta + ETA)...")
         np.random.seed(42)
         n_samples = 10000
         
@@ -43,29 +47,34 @@ class PukarIAPredictor:
         pendiente_p1 = np.full(n_samples, 18.0) # 18 grados (muy empinada)
         pendiente_p2 = np.full(n_samples, 5.0)  # 5 grados (plana)
         
-        tiempo_giro_p1 = np.random.randint(30, 180, n_samples) # Segundos que toma cuadrarse
+        tiempo_giro_p1 = np.random.randint(30, 180, n_samples) # Segundos
         tiempo_giro_p2 = np.random.randint(30, 180, n_samples)
         
-        # Etiquetado: Lógica de costo de vida real
-        y = []
+        # Etiquetado Dual (Ruta y Tiempo)
+        y_ruta = []
+        y_tiempo = []
+        
         for i in range(n_samples):
-            # Costo 1 = Distancia + Cola + Dificultad de Subida(Desgaste*Pendiente) + Tiempo Giro + Peligro Clima
-            costo_1 = (dist_p1[i] * 1.5) + (cola_p1[i] * 2.0) + \
-                      (desgaste_motor[i] * pendiente_p1[i] * 5.0) + \
+            # Tiempo estimado real en minutos
+            # Base: asumiendo 30km/h velocidad base -> dist/30 * 60 = dist * 2
+            tiempo_1 = (dist_p1[i] * 2.0) + (cola_p1[i] * 2.5) + \
+                      (desgaste_motor[i] * pendiente_p1[i] * 0.5) + \
                       (tiempo_giro_p1[i] / 60.0) + \
-                      (clima_severidad[i] * pendiente_p1[i] * 3.0) + \
-                      np.random.normal(0, 5) # Ruido humano
+                      (clima_severidad[i] * pendiente_p1[i] * 0.8) + \
+                      np.random.normal(0, 2) # Ruido humano
                       
-            costo_2 = (dist_p2[i] * 1.5) + (cola_p2[i] * 2.0) + \
-                      (desgaste_motor[i] * pendiente_p2[i] * 5.0) + \
+            tiempo_2 = (dist_p2[i] * 2.0) + (cola_p2[i] * 2.5) + \
+                      (desgaste_motor[i] * pendiente_p2[i] * 0.5) + \
                       (tiempo_giro_p2[i] / 60.0) + \
-                      (clima_severidad[i] * pendiente_p2[i] * 3.0) + \
-                      np.random.normal(0, 5)
+                      (clima_severidad[i] * pendiente_p2[i] * 0.8) + \
+                      np.random.normal(0, 2)
                       
-            if costo_1 <= costo_2:
-                y.append("Pala 1")
+            if tiempo_1 <= tiempo_2:
+                y_ruta.append("Pala 1")
+                y_tiempo.append(round(tiempo_1, 1))
             else:
-                y.append("Pala 2")
+                y_ruta.append("Pala 2")
+                y_tiempo.append(round(tiempo_2, 1))
                 
         df = pd.DataFrame({
             "cola_p1": cola_p1,
@@ -84,44 +93,57 @@ class PukarIAPredictor:
             os.makedirs("data")
             
         df_export = df.copy()
-        df_export["decision_optima"] = y
+        df_export["decision_optima"] = y_ruta
+        df_export["eta_minutos"] = y_tiempo
         df_export.to_csv("data/historial_mina_avanzado.csv", index=False)
         
-        print("\n👀 MUESTRA DEL DATASET (Hiperrealista):")
-        print(df_export[['cola_p1', 'clima_severidad', 'desgaste_motor', 'tiempo_giro_p1', 'decision_optima']].head().to_string(index=False))
+        # ENTRENAMIENTO DUAL
+        X = df
+        X_train, X_test, yr_train, yr_test, yt_train, yt_test = train_test_split(
+            X, y_ruta, y_tiempo, test_size=0.2, random_state=42
+        )
         
-        X_train, X_test, y_train, y_test = train_test_split(df, y, test_size=0.2, random_state=42)
+        print("\n🧠 Entrenando Modelo 1: Clasificador de Rutas...")
+        self.modelo_ruta = RandomForestClassifier(n_estimators=100, max_depth=15, random_state=42)
+        self.modelo_ruta.fit(X_train, yr_train)
         
-        print("\n🧠 Entrenando Random Forest con 10 variables...")
-        self.modelo = RandomForestClassifier(n_estimators=100, max_depth=15, random_state=42)
-        self.modelo.fit(X_train, y_train)
+        print("🧠 Entrenando Modelo 2: Regresor de Tiempos (ETA)...")
+        self.modelo_tiempo = RandomForestRegressor(n_estimators=100, max_depth=15, random_state=42)
+        self.modelo_tiempo.fit(X_train, yt_train)
         self.entrenado = True
         
-        joblib.dump(self.modelo, MODEL_PATH)
-        print(f"✅ ¡Entrenamiento exitoso! Precisión Test Set: {self.modelo.score(X_test, y_test)*100:.2f}%")
+        joblib.dump(self.modelo_ruta, MODEL_CLASSIFIER_PATH)
+        joblib.dump(self.modelo_tiempo, MODEL_REGRESSOR_PATH)
+        
+        print(f"✅ ¡Entrenamiento exitoso!")
+        print(f"🎯 Precisión Ruta (Test): {self.modelo_ruta.score(X_test, yr_test)*100:.2f}%")
+        print(f"🎯 Precisión Tiempo ETA (R² Score): {self.modelo_tiempo.score(X_test, yt_test)*100:.2f}%\n")
         
     def predecir_ruta(self, datos_telemetria):
         """
         Recibe un diccionario con los datos en vivo.
+        Devuelve tanto la ruta como el ETA.
         """
         df_vivo = pd.DataFrame([datos_telemetria])
-        
-        # Asegurar que las columnas coincidan con el entrenamiento
         columnas = ["cola_p1", "cola_p2", "dist_p1", "dist_p2", "clima_severidad", 
                     "desgaste_motor", "pendiente_p1", "pendiente_p2", "tiempo_giro_p1", "tiempo_giro_p2"]
         df_vivo = df_vivo[columnas]
         
-        prediccion = self.modelo.predict(df_vivo)[0]
-        probabilidades = self.modelo.predict_proba(df_vivo)[0]
-        confianza = max(probabilidades) * 100
+        # Predicción 1: Ruta
+        pred_ruta = self.modelo_ruta.predict(df_vivo)[0]
+        prob_ruta = max(self.modelo_ruta.predict_proba(df_vivo)[0]) * 100
+        
+        # Predicción 2: Tiempo ETA
+        pred_tiempo = self.modelo_tiempo.predict(df_vivo)[0]
         
         return {
-            "asignacion": prediccion,
-            "confianza": round(confianza, 1)
+            "asignacion": pred_ruta,
+            "confianza": round(prob_ruta, 1),
+            "eta_minutos": round(pred_tiempo, 1)
         }
 
 if __name__ == "__main__":
-    print("=== PUKARIA ML ENGINE (TELEMETRÍA AVANZADA) ===")
+    print("=== PUKARIA DUAL ML ENGINE ===")
     ia = PukarIAPredictor()
     ia.entrenar_modelo_y_guardar()
-    print("==============================================")
+    print("==============================")
